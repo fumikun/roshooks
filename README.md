@@ -85,4 +85,4 @@ pnpm build       # vite build -> dist/ (ESM + CJS + type declarations)
 
 ## License
 
-MIT
+MIT. This project depends on [roslib.js](https://github.com/RobotWebTools/roslibjs), which is licensed under BSD-3-Clause.
