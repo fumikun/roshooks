@@ -83,6 +83,26 @@ pnpm test        # vitest
 pnpm build       # vite build -> dist/ (ESM + CJS + type declarations)
 ```
 
+## Publishing to npm
+
+Releases are cut by pushing a `vX.Y.Z` tag, which triggers [`.github/workflows/publish.yml`](./.github/workflows/publish.yml):
+
+1. Bump `version` in `package.json` (e.g. `pnpm version patch|minor|major`, which also creates the matching git tag and commit).
+2. Push the commit and the tag: `git push && git push --tags`.
+3. The workflow verifies the tag matches `package.json`'s version, runs `typecheck` → `test` → `build`, then publishes to npm with provenance.
+
+This requires a one-time setup on the repository: add an **automation-type** npm access token as the `NPM_TOKEN` secret under **Settings → Secrets and variables → Actions**.
+
+To publish manually instead:
+
+```bash
+npm login             # once per machine
+pnpm typecheck && pnpm test && pnpm build
+pnpm publish --access public
+```
+
+`prepublishOnly` re-runs typecheck/test/build automatically so a stale or broken `dist/` is never published. Only `dist/` (per the `files` field in `package.json`) is included in the published tarball.
+
 ## License
 
-MIT. This project depends on [roslib.js](https://github.com/RobotWebTools/roslibjs), which is licensed under BSD-3-Clause.
+BSD-3-Clause, matching this project's dependency on [roslib.js](https://github.com/RobotWebTools/roslibjs), which is also licensed under BSD-3-Clause.
