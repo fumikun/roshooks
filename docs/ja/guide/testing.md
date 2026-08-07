@@ -1,6 +1,40 @@
 # テストの書き方
 
-roshooks 自体のテストは実際の WebSocket を使わず、`roslib.Ros` の `transportFactory` オプションを差し替えることで検証しています。アプリ側のコンポーネントをテストするときも同じアプローチが使えます。
+このガイドは、roshooks 自体のテストスイートと同じく [Vitest](https://vitest.dev/) と [`@testing-library/react`](https://testing-library.com/docs/react-testing-library/intro/) を使うことを前提にしています。ここで紹介する手法自体は roshooks 固有のテストユーティリティに依存しておらず、`roslib.Ros` の `transportFactory` オプションを差し替えるだけなので、アプリ側のコンポーネントをテストする場合にも同じように使えます。
+
+## セットアップ
+
+```bash
+pnpm add -D vitest jsdom @testing-library/react
+```
+
+Vitest で React コンポーネントを描画するには DOM 環境が必要です。`vite.config.ts`(または別ファイルの `vitest.config.ts`)で設定します。
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: "jsdom",
+    globals: true, // describe/it/expect を import なしで使えるようになる
+  },
+});
+```
+
+実行用のスクリプトも追加しておきます。
+
+```json
+{
+  "scripts": {
+    "test": "vitest run"
+  }
+}
+```
+
+以下のサンプルでは `globals: true` を設定していても `describe` / `it` / `expect` を `"vitest"` から明示的に import しています。これは roshooks 自体のテストコードのスタイルに合わせたものです。globals に頼る場合は import を省略しても構いません。
 
 ## フェイクトランスポート
 
@@ -61,10 +95,14 @@ export function createFakeTransportFactory() {
 }
 ```
 
+このファイル自体は Vitest に依存していないため、テストランナーが何であってもそのまま再利用できます。Vitest 固有なのは、この後の `*.test.tsx` ファイルの部分です。
+
 ## RosProvider の接続状態をテストする
 
 ```tsx
+// RosProvider.test.tsx
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { RosProvider, useRos } from "roshooks";
 import { createFakeTransportFactory } from "./utils/fakeTransport";
 
@@ -73,34 +111,45 @@ function StatusProbe() {
   return <div data-testid="status">{status}</div>;
 }
 
-it("connects once the transport opens", async () => {
-  const { factory, transports } = createFakeTransportFactory();
+describe("RosProvider", () => {
+  it("connects once the transport opens", async () => {
+    const { factory, transports } = createFakeTransportFactory();
 
-  render(
-    <RosProvider url="ws://localhost:9090" transportFactory={factory}>
-      <StatusProbe />
-    </RosProvider>,
-  );
+    render(
+      <RosProvider url="ws://localhost:9090" transportFactory={factory}>
+        <StatusProbe />
+      </RosProvider>,
+    );
 
-  expect(screen.getByTestId("status").textContent).toBe("connecting");
+    expect(screen.getByTestId("status").textContent).toBe("connecting");
 
-  await waitFor(() => expect(transports).toHaveLength(1));
-  act(() => transports[0].open());
+    await waitFor(() => expect(transports).toHaveLength(1));
+    act(() => transports[0].open());
 
-  await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("connected"));
+    await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("connected"));
+  });
 });
 ```
 
+`pnpm test`(watch モードなら `pnpm vitest`)で実行できます。
+
 ## トピックのメッセージ受信をテストする
 
-`Ros` は EventEmitter でもあるため、rosbridge からの publish メッセージは `ros.emit(topicName, { op: "publish", topic, msg })` で直接シミュレートできます。`ros` は `useRos()` から取得してテストコードに渡します。
+`Ros` は EventEmitter でもあるため、rosbridge からの publish メッセージは `ros.emit(topicName, { op: "publish", topic, msg })` で直接シミュレートできます。`ros` は `useRos()` から取得し(例えばテスト対象のコンポーネントから props のコールバックで渡すなど)、テストコードに渡します。
 
 ```tsx
-act(() => {
-  ros.emit("/chatter", { op: "publish", topic: "/chatter", msg: { data: "hello" } });
-});
+import { act, waitFor, screen } from "@testing-library/react";
+import { expect, it } from "vitest";
 
-await waitFor(() => expect(screen.getByTestId("message").textContent).toBe("hello"));
+it("updates with each incoming message", async () => {
+  // ...useRos() から onRos(ros) を呼び、useTopic で購読するコンポーネントを描画...
+
+  act(() => {
+    ros.emit("/chatter", { op: "publish", topic: "/chatter", msg: { data: "hello" } });
+  });
+
+  await waitFor(() => expect(screen.getByTestId("message").textContent).toBe("hello"));
+});
 ```
 
 ## サービス呼び出しをテストする
@@ -108,21 +157,32 @@ await waitFor(() => expect(screen.getByTestId("message").textContent).toBe("hell
 サービス呼び出しは `call_service:<name>:<uuid>` という ID で送信され、その ID 宛の `service_response` メッセージで解決します。送信済みメッセージ(`transport.sent`)から ID を取得し、対応するレスポンスを `ros.emit` で返してあげます。
 
 ```tsx
-act(() => screen.getByTestId("call").click());
+import { act, screen, waitFor } from "@testing-library/react";
+import { expect, it } from "vitest";
 
-const callMessage = transports[0].sent.find((m) => m.op === "call_service");
+it("resolves callService once rosbridge replies", async () => {
+  // ...上記と同様に描画してトランスポートを open し、呼び出しをトリガー...
 
-act(() => {
-  ros.emit(callMessage.id, {
-    op: "service_response",
-    id: callMessage.id,
-    service: "/add_two_ints",
-    values: { sum: 5 },
-    result: true,
+  act(() => screen.getByTestId("call").click());
+
+  const callMessage = transports[0].sent.find((m) => m.op === "call_service");
+
+  act(() => {
+    ros.emit(callMessage.id, {
+      op: "service_response",
+      id: callMessage.id,
+      service: "/add_two_ints",
+      values: { sum: 5 },
+      result: true,
+    });
   });
-});
 
-await waitFor(() => expect(screen.getByTestId("result").textContent).toBe("5"));
+  await waitFor(() => expect(screen.getByTestId("result").textContent).toBe("5"));
+});
 ```
 
-このパターンをベースに、`useParam` や `useAction` も同様に `transport.sent` から送信内容を検証し、必要なイベントを `ros.emit` で返すことでテストできます。
+このパターン(`transport.sent` から送信内容を確認し、対応するレスポンスを `ros.emit` で返す)は `useParam` や `useAction` にも同様に使えます。
+
+::: tip
+`callService` / `setValue` などは Promise を返します。失敗するはずの呼び出しをテストで発火させる場合、クリックハンドラ(またはご自身のコード側)で `.catch()` を付けておいてください。付けていないと、テスト自体は成功していても Vitest が unhandled rejection として報告します。完全な例は roshooks 自体の [`useService` のテスト](https://github.com/fumikun/roshooks/blob/main/tests/useService.test.tsx) にある `error` フィールドのアサーションを参照してください。
+:::
