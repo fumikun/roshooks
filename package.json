@@ -1,6 +1,6 @@
 {
   "name": "roshooks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React hooks for roslibjs — connect React apps to ROS/ROS2 over rosbridge.",
   "type": "module",
   "license": "BSD-3-Clause",
