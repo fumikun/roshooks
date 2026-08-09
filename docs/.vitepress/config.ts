@@ -10,6 +10,13 @@ export default defineConfig({
 
   themeConfig: {
     // Shared across all locales.
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/fumikun/roshooks' },
+    ],
+    footer: {
+      message: 'Released under the BSD-3 License.',
+      copyright: 'Copyright © 2026-present fumikun'
+    },
     search: {
       provider: "local",
       options: {
